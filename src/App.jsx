@@ -12,33 +12,44 @@ import {
 } from 'lucide-react';
 
 // --- Configuration Recovery ---
-/**
- * CRITICAL FIX: Safe access to process.env to avoid "process is not defined" 
- * in browsers or environments that do not inject it globally.
- */
-const safeEnv = (key) => {
-  try {
-    return typeof process !== 'undefined' && process.env ? process.env[key] : undefined;
-  } catch (e) {
-    return undefined;
-  }
-};
-
-const rawConfig = safeEnv('REACT_APP_FIREBASE_CONFIG');
-const rawAiKey = safeEnv('REACT_APP_GEMINI_API_KEY');
+const rawConfig = process.env.REACT_APP_FIREBASE_CONFIG;
+const rawAiKey = process.env.REACT_APP_GEMINI_API_KEY;
 
 const getFirebaseConfig = () => {
   if (!rawConfig) return null;
   try {
-    // 1. Trim whitespace
-    // 2. Remove potential surrounding literal quotes if they were pasted into Vercel
+    // 1. Basic cleaning
     let cleaned = rawConfig.trim();
+    
+    // 2. Remove surrounding double-quotes that Vercel sometimes adds
     if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
       cleaned = cleaned.substring(1, cleaned.length - 1);
     }
+    
+    // 3. Handle escaped quotes if the build tool double-escaped them
+    cleaned = cleaned.replace(/\\"/g, '"');
+    
     return JSON.parse(cleaned);
   } catch (e) {
-    console.error("Firebase Config JSON is invalid. Error:", e.message);
+    // 4. Emergency fallback: try to extract keys manually if JSON.parse fails
+    // This handles cases where the string is "dirty" but contains the info we need
+    try {
+        const extract = (key) => {
+            const match = rawConfig.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+            return match ? match[1] : null;
+        };
+        const fallback = {
+            apiKey: extract("apiKey"),
+            authDomain: extract("authDomain"),
+            projectId: extract("projectId"),
+            storageBucket: extract("storageBucket"),
+            messagingSenderId: extract("messagingSenderId"),
+            appId: extract("appId")
+        };
+        if (fallback.apiKey && fallback.projectId) return fallback;
+    } catch (err) {
+        return null;
+    }
     return null;
   }
 };
@@ -92,28 +103,22 @@ const App = () => {
   // LOG STATUS FOR DEBUGGING
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Raw Firebase String Length:", rawConfig?.length);
-    if (rawConfig) {
-        const firstChar = rawConfig.trim().charAt(0);
-        const lastChar = rawConfig.trim().charAt(rawConfig.trim().length - 1);
-        console.log("Starts with:", firstChar, "Ends with:", lastChar);
-        if (firstChar !== '{') console.warn("WARNING: Config does not start with {. Check Vercel value for extra quotes.");
-    }
-    const parsed = getFirebaseConfig();
-    console.log("Firebase Config Parsed Successfully:", !!parsed);
+    console.log("Firebase String Length:", rawConfig?.length);
+    console.log("Firebase Config Object Created:", !!firebaseConfig);
+    console.log("Gemini API Key Detected:", !!rawAiKey);
   }, []);
 
   // Error Guard for missing Environment Variables
   if (!firebaseConfig || !firebaseConfig.apiKey || !apiKey) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center">
-        <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-red-50 max-w-xl">
+        <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-red-50 max-w-xl w-full">
           <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
             <AlertCircle size={40} />
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
           <p className="text-slate-500 mb-8 leading-relaxed">
-            The data Vercel is sending isn't quite right. The "Firebase Config" is arriving, but it's not in a format the app can read.
+            The data is reaching the app, but the format is preventing it from starting.
           </p>
           
           <div className="grid grid-cols-1 gap-3 mb-8 text-left">
@@ -123,7 +128,9 @@ const App = () => {
                     {firebaseConfig ? <CheckCircle2 size={18} className="text-emerald-500"/> : <AlertCircle size={18}/>}
                 </div>
                 {!firebaseConfig && rawConfig && (
-                    <p className="text-[10px] font-bold opacity-70">Error: String received but failed to parse. Likely contains extra quotes or invisible characters.</p>
+                    <div className="mt-2 text-[10px] font-mono bg-white/50 p-2 rounded border border-amber-200 overflow-x-auto whitespace-pre">
+                      {rawConfig.substring(0, 50)}...
+                    </div>
                 )}
              </div>
              <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawAiKey ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
@@ -132,18 +139,16 @@ const App = () => {
              </div>
           </div>
 
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 text-left text-xs text-indigo-800 mb-8">
-            <p className="font-bold mb-1">Quick Fix Strategy:</p>
-            <ol className="list-decimal ml-4 space-y-1">
-                <li>Go to Vercel Environment Variables.</li>
-                <li>Edit <strong>REACT_APP_FIREBASE_CONFIG</strong>.</li>
-                <li>Delete the value and paste it as a <strong>single line</strong>.</li>
-                <li>Make sure there are <strong>NO</strong> double quotes surrounding the curly braces.</li>
-            </ol>
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 text-left text-xs text-indigo-800 mb-8">
+            <p className="font-bold mb-2 uppercase tracking-wider">Final Verification:</p>
+            <p className="mb-4">Inside the Vercel Value box for <strong>REACT_APP_FIREBASE_CONFIG</strong>, ensure the string looks exactly like this (no outer quotes):</p>
+            <code className="block bg-white p-3 rounded-lg border border-indigo-200 overflow-x-auto select-all">
+              {"{\"apiKey\":\"...\",\"authDomain\":\"...\"}"}
+            </code>
           </div>
 
           <a href="https://vercel.com" target="_blank" rel="noreferrer" className="w-full inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 transition-all">
-            Open Vercel Dashboard
+            Redeploy (No Build Cache)
           </a>
         </div>
       </div>
@@ -154,7 +159,7 @@ const App = () => {
     if (auth) {
         signInAnonymously(auth).catch(err => {
             console.error("Auth Error:", err);
-            setError("Firebase Auth failed. Check your API key.");
+            setError("Firebase connection failed.");
         });
         return onAuthStateChanged(auth, setUser);
     }
@@ -187,21 +192,13 @@ const App = () => {
       audioChunksRef.current = [];
       setBookmarks([]);
       setUploadedFile(null);
+
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
       analyserRef.current = audioCtx.createAnalyser();
       source.connect(analyserRef.current);
-      const draw = () => {
-        animationFrameRef.current = requestAnimationFrame(draw);
-        const data = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(data);
-        const ctx = canvasRef.current?.getContext('2d');
-        if(!ctx) return;
-        ctx.clearRect(0,0,400,80);
-        ctx.fillStyle = '#6366f1';
-        for(let i=0; i<60; i++) ctx.fillRect(i*6, 80 - (data[i]/255)*80, 4, (data[i]/255)*80);
-      };
-      draw();
+      drawVisualizer();
+
       mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
       mediaRecorderRef.current.onstop = () => {
         setAudioBlob(new Blob(audioChunksRef.current, { type: 'audio/webm' }));
@@ -210,34 +207,52 @@ const App = () => {
       mediaRecorderRef.current.start();
       setIsRecording(true);
       setError(null);
-    } catch (err) { setError("Mic access denied."); }
+    } catch (err) { setError("Microphone access denied."); }
+  };
+
+  const drawVisualizer = () => {
+    if (!canvasRef.current || !analyserRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const data = new Uint8Array(analyserRef.current.frequencyBinCount);
+    const render = () => {
+      animationFrameRef.current = requestAnimationFrame(render);
+      analyserRef.current.getByteFrequencyData(data);
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      ctx.fillStyle = '#6366f1';
+      for(let i=0; i<60; i++) {
+        const h = (data[i] / 255) * canvasRef.current.height;
+        ctx.fillRect(i * 6, canvasRef.current.height - h, 4, h);
+      }
+    };
+    render();
   };
 
   const processInput = async () => {
-    const src = audioBlob || uploadedFile;
-    if (!src) return;
+    const source = audioBlob || uploadedFile;
+    if (!source) return;
     setIsProcessing(true);
     const reader = new FileReader();
-    reader.readAsDataURL(src);
+    reader.readAsDataURL(source);
     reader.onloadend = async () => {
       const base64 = reader.result.split(',')[1];
+      const mimeType = source.type || "audio/mpeg";
       const prompt = `Transcribe meeting JSON: { "title": "", "summary": "", "keyPoints": [], "actionItems": [{"owner": "", "task": ""}], "transcript": "" }`;
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`, {
           method: 'POST',
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: src.type || "audio/mpeg", data: base64 } }] }],
+            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
             generationConfig: { responseMimeType: "application/json" }
           })
         });
         const result = await res.json();
         const data = JSON.parse(result.candidates[0].content.parts[0].text);
         const meetingData = { 
-          ...data, 
-          timestamp: Date.now(), 
-          duration: uploadedFile ? 0 : recordingDuration, 
-          folderId: activeFolderId === 'all' ? 'unorganized' : (activeFolderId || 'unorganized'),
-          sourceType: uploadedFile ? 'upload' : 'record' 
+            ...data, 
+            timestamp: Date.now(), 
+            duration: uploadedFile ? 0 : recordingDuration, 
+            folderId: activeFolderId === 'all' ? 'unorganized' : (activeFolderId || 'unorganized'),
+            sourceType: uploadedFile ? 'upload' : 'record'
         };
         const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'meetings'), meetingData);
         setCurrentMeeting({ id: docRef.id, ...meetingData });
@@ -249,8 +264,9 @@ const App = () => {
   };
 
   const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2, '0')}`;
-  const resolveSpeaker = (t) => {
-    let r = t;
+  const resolveSpeaker = (text) => {
+    if (!text) return text;
+    let r = text;
     Object.entries(speakerMap).forEach(([id, name]) => { if(name) r = r.replace(new RegExp(id, 'gi'), name); });
     return r;
   };
