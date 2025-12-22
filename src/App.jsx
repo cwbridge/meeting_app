@@ -80,6 +80,7 @@ const App = () => {
   const animationFrameRef = useRef(null);
   const analyserRef = useRef(null);
   const fileInputRef = useRef(null);
+  const streamRef = useRef(null);
 
   // Auth Initialization
   useEffect(() => {
@@ -126,9 +127,15 @@ const App = () => {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      streamRef.current = stream;
+      
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      
       setUploadedFile(null);
+      setAudioBlob(null);
+      setError(null);
       
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
@@ -136,19 +143,41 @@ const App = () => {
       source.connect(analyserRef.current);
       drawVisualizer();
 
-      mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
-      mediaRecorderRef.current.onstop = () => {
-        setAudioBlob(new Blob(audioChunksRef.current, { type: 'audio/webm' }));
-        stream.getTracks().forEach(t => t.stop());
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        // Create the final blob
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        
+        // Critical: Update state so UI switches out of recording mode
+        setIsRecording(false);
+        
+        // Stop all hardware tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
+        
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       };
 
-      mediaRecorderRef.current.start();
+      mediaRecorder.start();
       setIsRecording(true);
       setRecordingDuration(0);
-      setError(null);
     } catch (err) { 
       setError("Microphone access denied."); 
+      console.error(err);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
     }
   };
 
@@ -282,51 +311,53 @@ const App = () => {
                 <div className="max-w-2xl mx-auto py-12 text-center bg-white p-12 rounded-[3rem] shadow-xl">
                     {isRecording ? (
                         <div className="space-y-8">
-                            <div className="text-8xl font-black text-slate-800">{formatTime(recordingDuration)}</div>
+                            <div className="text-8xl font-black text-slate-800 tabular-nums">{formatTime(recordingDuration)}</div>
                             <canvas ref={canvasRef} width={400} height={80} className="w-full h-20 opacity-30 mx-auto" />
-                            <button onClick={() => mediaRecorderRef.current.stop()} className="px-12 py-5 bg-red-500 text-white rounded-3xl font-black text-xl">Stop</button>
+                            <button onClick={stopRecording} className="px-12 py-5 bg-red-500 text-white rounded-3xl font-black text-xl hover:bg-red-600 transition-colors">Stop Recording</button>
                         </div>
                     ) : (audioBlob || uploadedFile) ? (
                         <div className="space-y-6">
                             <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto"><CheckCircle2 size={40} /></div>
                             <h2 className="text-3xl font-black">Audio Ready</h2>
-                            <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg">
-                                {isProcessing ? "Analyzing..." : "Run AI Analysis"}
+                            <p className="text-slate-500 text-sm">Length: {formatTime(recordingDuration)}</p>
+                            <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg disabled:opacity-50 transition-all">
+                                {isProcessing ? "Analyzing with AI..." : "Run AI Analysis"}
                             </button>
+                            <button onClick={() => {setAudioBlob(null); setUploadedFile(null); setRecordingDuration(0);}} className="text-slate-400 text-xs font-bold hover:text-red-500 uppercase tracking-widest mt-4">Discard</button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-2 gap-4">
-                            <button onClick={startRecording} className="p-10 bg-indigo-600 text-white rounded-[2.5rem] text-left">
+                            <button onClick={startRecording} className="p-10 bg-indigo-600 text-white rounded-[2.5rem] text-left hover:bg-indigo-700 transition-all">
                                 <h3 className="text-2xl font-black">Record</h3>
-                                <p className="text-indigo-200 text-xs">Live Capture</p>
+                                <p className="text-indigo-200 text-xs uppercase tracking-widest">Live Capture</p>
                             </button>
-                            <div onClick={() => fileInputRef.current.click()} className="p-10 bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] text-left cursor-pointer">
+                            <div onClick={() => fileInputRef.current.click()} className="p-10 bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] text-left cursor-pointer hover:border-indigo-400 transition-all">
                                 <h3 className="text-2xl font-black text-slate-800">Upload</h3>
-                                <p className="text-slate-400 text-xs">Audio Files</p>
+                                <p className="text-slate-400 text-xs uppercase tracking-widest">Audio Files</p>
                                 <input type="file" ref={fileInputRef} onChange={e => setUploadedFile(e.target.files[0])} accept="audio/*" className="hidden" />
                             </div>
                         </div>
                     )}
-                    {error && <div className="mt-4 text-red-500 text-xs font-bold">{error}</div>}
+                    {error && <div className="mt-4 p-3 bg-red-50 text-red-500 rounded-xl text-xs font-bold border border-red-100">{error}</div>}
                 </div>
             ) : (
                 <div className="max-w-5xl mx-auto space-y-8 pb-32">
                     <div className="flex items-center justify-between">
-                        <button onClick={() => setView('dashboard')} className="p-2 hover:bg-white rounded-lg text-slate-300"><Undo2 size={20}/></button>
-                        <h2 className="text-2xl font-black">Meeting Intelligence</h2>
-                        <button onClick={() => setIsEditing(!isEditing)} className="px-6 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold">
-                          {isEditing ? "Save" : "Edit"}
+                        <button onClick={() => setView('dashboard')} className="p-2 hover:bg-white rounded-lg text-slate-300 transition-colors"><Undo2 size={20}/></button>
+                        <h2 className="text-2xl font-black text-slate-800">Meeting Intelligence</h2>
+                        <button onClick={() => setIsEditing(!isEditing)} className="px-6 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all">
+                          {isEditing ? "Save Session" : "Edit Details"}
                         </button>
                     </div>
                     <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-100">
-                        <h1 className="text-4xl font-black mb-6">{currentMeeting?.title}</h1>
+                        <h1 className="text-4xl font-black mb-6 text-slate-900 tracking-tight">{currentMeeting?.title}</h1>
                         <section className="mb-12">
-                            <h4 className="text-[10px] font-black uppercase text-indigo-500 mb-4">Summary</h4>
+                            <h4 className="text-[10px] font-black uppercase text-indigo-500 mb-4 tracking-widest">Summary</h4>
                             <p className="text-lg text-slate-700 leading-relaxed">{resolveSpeaker(currentMeeting?.summary)}</p>
                         </section>
                         <section>
-                            <h4 className="text-[10px] font-black uppercase text-indigo-500 mb-4">Transcript</h4>
-                            <div className="bg-slate-50 rounded-2xl p-8 text-xs font-mono whitespace-pre-wrap">
+                            <h4 className="text-[10px] font-black uppercase text-indigo-500 mb-4 tracking-widest">Full Transcript</h4>
+                            <div className="bg-slate-50 rounded-2xl p-8 text-xs font-mono text-slate-600 whitespace-pre-wrap leading-loose border border-slate-100">
                                 {resolveSpeaker(currentMeeting?.transcript)}
                             </div>
                         </section>
