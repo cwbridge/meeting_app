@@ -12,27 +12,42 @@ import {
 } from 'lucide-react';
 
 // --- Configuration Recovery ---
+// Safer way to access environment variables to prevent "process is not defined" errors
+const getEnv = (key) => {
+  try {
+    return typeof process !== 'undefined' && process.env ? process.env[key] : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+const rawConfig = getEnv('REACT_APP_FIREBASE_CONFIG');
+const rawAiKey = getEnv('REACT_APP_GEMINI_API_KEY');
+
 const getFirebaseConfig = () => {
   try {
-    const config = process.env.REACT_APP_FIREBASE_CONFIG;
-    return config ? JSON.parse(config) : null;
+    return rawConfig ? JSON.parse(rawConfig) : null;
   } catch (e) {
-    console.error("Failed to parse Firebase Config:", e);
+    console.error("Firebase Config JSON is invalid. Ensure it's a clean JSON object.");
     return null;
   }
 };
 
 const firebaseConfig = getFirebaseConfig();
-const apiKey = process.env.REACT_APP_GEMINI_API_KEY || ""; 
+const apiKey = rawAiKey || ""; 
 const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
 const appId = "meeting-notes-pro-v5";
 
 // Initialize services only if config exists
 let app, auth, db;
 if (firebaseConfig && firebaseConfig.apiKey) {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Firebase Initialization Error:", e);
+  }
 }
 
 const App = () => {
@@ -64,24 +79,50 @@ const App = () => {
   const analyserRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // LOG STATUS FOR DEBUGGING (Visible in Browser Console)
+  useEffect(() => {
+    console.log("--- Meeting Pro Debug Status ---");
+    console.log("Firebase Config Detected:", !!rawConfig);
+    console.log("Gemini API Key Detected:", !!rawAiKey);
+    if (!rawConfig) console.warn("Check Vercel: REACT_APP_FIREBASE_CONFIG is missing.");
+    if (!rawAiKey) console.warn("Check Vercel: REACT_APP_GEMINI_API_KEY is missing.");
+  }, []);
+
   // Error Guard for missing Environment Variables
   if (!firebaseConfig || !firebaseConfig.apiKey || !apiKey) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 text-center">
-        <div className="bg-white p-8 rounded-3xl shadow-xl border border-red-100 max-w-md">
-          <AlertCircle className="text-red-500 w-16 h-16 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Configuration Missing</h1>
-          <p className="text-slate-500 mb-6">
-            The application is missing its API keys. Please ensure you have added 
-            <code className="bg-slate-100 px-1 rounded">REACT_APP_FIREBASE_CONFIG</code> and 
-            <code className="bg-slate-100 px-1 rounded">REACT_APP_GEMINI_API_KEY</code> to your Vercel Environment Variables.
+        <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-red-50 max-w-xl">
+          <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
+          <p className="text-slate-500 mb-8 leading-relaxed">
+            Your application deployed successfully, but it's missing the secret keys required to talk to Gemini and Firebase.
           </p>
+          
+          <div className="grid grid-cols-1 gap-3 mb-8 text-left">
+             <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawConfig ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                <span className="text-xs font-bold uppercase tracking-widest">Firebase Config</span>
+                {rawConfig ? <CheckCircle2 size={18}/> : <X size={18}/>}
+             </div>
+             <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawAiKey ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                <span className="text-xs font-bold uppercase tracking-widest">Gemini API Key</span>
+                {rawAiKey ? <CheckCircle2 size={18}/> : <X size={18}/>}
+             </div>
+          </div>
+
+          <p className="text-xs text-slate-400 mb-8">
+            Note: If you just added these in Vercel, you <strong>must</strong> go to the Deployments tab and click <strong>Redeploy</strong>.
+          </p>
+
           <a 
             href="https://vercel.com" 
             target="_blank" 
-            className="inline-block bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold shadow-lg"
+            rel="noreferrer"
+            className="w-full inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 transition-all"
           >
-            Go to Vercel Settings
+            Open Vercel Dashboard
           </a>
         </div>
       </div>
@@ -89,11 +130,13 @@ const App = () => {
   }
 
   useEffect(() => {
-    signInAnonymously(auth).catch(err => {
-        console.error("Auth Error:", err);
-        setError("Failed to connect to the cloud. Check your Firebase settings.");
-    });
-    return onAuthStateChanged(auth, setUser);
+    if (auth) {
+        signInAnonymously(auth).catch(err => {
+            console.error("Auth Error:", err);
+            setError("Firebase Auth failed. Check your API key and Project ID.");
+        });
+        return onAuthStateChanged(auth, setUser);
+    }
   }, []);
 
   useEffect(() => {
@@ -211,9 +254,9 @@ const App = () => {
             <h1 className="font-bold text-lg tracking-tight">Meeting Pro</h1>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
-            <nav className="space-y-1">
-                <button onClick={() => { setActiveFolderId('all'); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${activeFolderId === 'all' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><LayoutDashboard size={16} /> All Meetings</button>
-                <button onClick={() => { setActiveFolderId(null); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${activeFolderId === null ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={16} /> Unorganized</button>
+            <nav className="space-y-1 text-xs font-bold">
+                <button onClick={() => { setActiveFolderId('all'); setView('dashboard'); }} className={`w-full text-left px-3 py-2 rounded-lg ${activeFolderId === 'all' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>All Meetings</button>
+                <button onClick={() => { setActiveFolderId(null); setView('dashboard'); }} className={`w-full text-left px-3 py-2 rounded-lg ${activeFolderId === null ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>Unorganized</button>
             </nav>
             <section>
                 <div className="flex items-center justify-between px-3 mb-2">
@@ -223,7 +266,7 @@ const App = () => {
                 <div className="space-y-1">
                     {folders.map(f => (
                         <div key={f.id} className="group relative">
-                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={16} className={activeFolderId === f.id ? 'fill-indigo-500' : ''} /><span className="truncate pr-4">{f.name}</span></button>
+                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
                             <button onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'folders', f.id)); }} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"><X size={12}/></button>
                         </div>
                     ))}
@@ -235,53 +278,52 @@ const App = () => {
         <header className="h-16 bg-white border-b border-slate-100 flex items-center justify-between px-8 shrink-0">
             <div className="flex items-center gap-4 flex-1">
                 {view !== 'dashboard' && <button onClick={() => setView('dashboard')} className="p-2 hover:bg-slate-50 rounded-lg text-slate-400"><ArrowLeft size={18}/></button>}
-                {view === 'dashboard' ? (
-                  <div className="relative w-full max-w-md">
+                <div className="relative w-full max-w-xs">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                    <input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-50 border border-slate-100 rounded-full py-2 pl-10 pr-4 text-xs outline-none" />
-                  </div>
-                ) : <h2 className="text-sm font-bold text-slate-700">{currentMeeting?.title || 'Processing...'}</h2>}
+                    <input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-50 rounded-full py-2 pl-10 pr-4 text-xs outline-none" />
+                </div>
             </div>
-            <button onClick={() => setView('record')} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md">+ New Session</button>
+            <button onClick={() => setView('record')} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md">+ New</button>
         </header>
         <div className="flex-1 overflow-y-auto p-8">
             {view === 'dashboard' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredHistory.map(m => (
-                        <div key={m.id} onClick={() => { setCurrentMeeting(m); setEditBuffer(m); setView('detail'); }} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-all">
+                        <div key={m.id} onClick={() => { setCurrentMeeting(m); setEditBuffer(m); setView('detail'); }} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-all">
                             <h3 className="font-bold text-slate-800 line-clamp-1">{m.title}</h3>
                             <div className="text-[10px] text-slate-400 mt-2 font-bold uppercase">{new Date(m.timestamp).toLocaleDateString()} • {formatTime(m.duration)}</div>
                         </div>
                     ))}
-                    {filteredHistory.length === 0 && <div className="col-span-full py-20 text-center text-slate-400 italic">No meetings found. Start a new session to begin.</div>}
+                    {filteredHistory.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings yet. Start one to begin!</div>}
                 </div>
             ) : view === 'record' ? (
                 <div className="max-w-xl mx-auto py-12 text-center bg-white p-12 rounded-[3rem] shadow-xl">
                     {isRecording ? (
                         <div className="space-y-8">
-                            <div className="text-6xl font-black tabular-nums">{formatTime(recordingDuration)}</div>
-                            <canvas ref={canvasRef} width={400} height={80} className="w-full h-20 opacity-30" />
-                            <button onClick={() => mediaRecorderRef.current.stop()} className="px-12 py-4 bg-red-500 text-white rounded-full font-bold">Stop</button>
+                            <div className="text-8xl font-black text-slate-800 tabular-nums">{formatTime(recordingDuration)}</div>
+                            <canvas ref={canvasRef} width={400} height={80} className="w-full h-20 opacity-30 mx-auto" />
+                            <button onClick={() => mediaRecorderRef.current.stop()} className="px-12 py-5 bg-red-500 text-white rounded-3xl font-black text-xl shadow-xl">Stop</button>
                         </div>
                     ) : (audioBlob || uploadedFile) ? (
                         <div className="space-y-6">
-                            <h2 className="text-2xl font-black">Audio Captured</h2>
-                            <button onClick={processInput} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
+                            <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto"><CheckCircle2 size={40} /></div>
+                            <h2 className="text-3xl font-black text-slate-900">Audio Ready</h2>
+                            <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            <button onClick={startRecording} className="w-full py-8 bg-indigo-600 text-white rounded-[2rem] font-bold text-xl">Start Recording</button>
+                            <button onClick={startRecording} className="w-full py-8 bg-indigo-600 text-white rounded-[2rem] font-bold text-xl">Live Record</button>
                             <input type="file" ref={fileInputRef} onChange={e => { setUploadedFile(e.target.files[0]); setAudioBlob(null); }} className="hidden" />
                             <button onClick={() => fileInputRef.current.click()} className="w-full py-8 bg-slate-100 text-slate-600 rounded-[2rem] font-bold text-xl border-2 border-dashed border-slate-200">Upload File</button>
                         </div>
                     )}
-                    {error && <div className="mt-4 text-red-500 text-sm font-bold">{error}</div>}
+                    {error && <div className="mt-4 text-red-500 text-xs font-bold uppercase tracking-widest">{error}</div>}
                 </div>
             ) : (
-                <div className="max-w-4xl mx-auto bg-white p-10 rounded-[2.5rem] shadow-sm">
-                    <h1 className="text-3xl font-black mb-6">{currentMeeting?.title}</h1>
-                    <p className="text-slate-600 leading-relaxed mb-8">{resolveSpeaker(currentMeeting?.summary)}</p>
-                    <div className="bg-slate-50 p-6 rounded-2xl font-mono text-xs whitespace-pre-wrap max-h-96 overflow-y-auto">{resolveSpeaker(currentMeeting?.transcript)}</div>
+                <div className="max-w-4xl mx-auto bg-white p-12 rounded-[3rem] shadow-sm border border-slate-100">
+                    <h1 className="text-4xl font-black text-slate-900 mb-6 tracking-tight">{currentMeeting?.title}</h1>
+                    <p className="text-xl text-slate-700 leading-relaxed font-medium mb-10">{resolveSpeaker(currentMeeting?.summary)}</p>
+                    <div className="bg-slate-50 p-8 rounded-[2rem] text-slate-600 leading-loose text-sm font-mono max-h-[500px] overflow-y-auto border border-slate-100 whitespace-pre-wrap">{resolveSpeaker(currentMeeting?.transcript)}</div>
                 </div>
             )}
         </div>
