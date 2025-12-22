@@ -12,17 +12,23 @@ import {
 } from 'lucide-react';
 
 // --- Configuration Recovery ---
-// Safer way to access environment variables to prevent "process is not defined" errors
-const getEnv = (key) => {
+/**
+ * CRITICAL FIX: To prevent "process is not defined" errors in various environments,
+ * we check for the existence of the process object before accessing it.
+ */
+const safeGetEnv = (key) => {
   try {
-    return typeof process !== 'undefined' && process.env ? process.env[key] : null;
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env[key];
+    }
   } catch (e) {
-    return null;
+    // Fallback for strict environments
   }
+  return undefined;
 };
 
-const rawConfig = getEnv('REACT_APP_FIREBASE_CONFIG');
-const rawAiKey = getEnv('REACT_APP_GEMINI_API_KEY');
+const rawConfig = safeGetEnv('REACT_APP_FIREBASE_CONFIG');
+const rawAiKey = safeGetEnv('REACT_APP_GEMINI_API_KEY');
 
 const getFirebaseConfig = () => {
   try {
@@ -82,10 +88,13 @@ const App = () => {
   // LOG STATUS FOR DEBUGGING (Visible in Browser Console)
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Firebase Config Detected:", !!rawConfig);
-    console.log("Gemini API Key Detected:", !!rawAiKey);
-    if (!rawConfig) console.warn("Check Vercel: REACT_APP_FIREBASE_CONFIG is missing.");
-    if (!rawAiKey) console.warn("Check Vercel: REACT_APP_GEMINI_API_KEY is missing.");
+    console.log("Firebase Config Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
+    console.log("Gemini API Key Received:", rawAiKey ? "Yes" : "No");
+    
+    if (rawConfig) {
+        const parsed = getFirebaseConfig();
+        console.log("Firebase Config Parsed Successfully:", !!parsed);
+    }
   }, []);
 
   // Error Guard for missing Environment Variables
@@ -98,23 +107,29 @@ const App = () => {
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
           <p className="text-slate-500 mb-8 leading-relaxed">
-            Your application deployed successfully, but it's missing the secret keys required to talk to Gemini and Firebase.
+            Your application deployed successfully, but the environment variables are not accessible. 
           </p>
           
           <div className="grid grid-cols-1 gap-3 mb-8 text-left">
              <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawConfig ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
-                <span className="text-xs font-bold uppercase tracking-widest">Firebase Config</span>
+                <span className="text-xs font-bold uppercase tracking-widest font-mono">REACT_APP_FIREBASE_CONFIG</span>
                 {rawConfig ? <CheckCircle2 size={18}/> : <X size={18}/>}
              </div>
              <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawAiKey ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
-                <span className="text-xs font-bold uppercase tracking-widest">Gemini API Key</span>
+                <span className="text-xs font-bold uppercase tracking-widest font-mono">REACT_APP_GEMINI_API_KEY</span>
                 {rawAiKey ? <CheckCircle2 size={18}/> : <X size={18}/>}
              </div>
           </div>
 
-          <p className="text-xs text-slate-400 mb-8">
-            Note: If you just added these in Vercel, you <strong>must</strong> go to the Deployments tab and click <strong>Redeploy</strong>.
-          </p>
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-left text-xs text-amber-800 mb-8">
+            <p className="font-bold mb-1">Troubleshooting Checklist:</p>
+            <ol className="list-decimal ml-4 space-y-1">
+                <li>Go to Vercel Settings {">"} Environment Variables.</li>
+                <li>Ensure the Key names match exactly as shown above.</li>
+                <li>Go to the Deployments tab and select <strong>Redeploy</strong>.</li>
+                <li>Ensure <strong>"Use existing Build Cache"</strong> is unchecked.</li>
+            </ol>
+          </div>
 
           <a 
             href="https://vercel.com" 
@@ -215,27 +230,17 @@ const App = () => {
           ...data, 
           timestamp: Date.now(), 
           duration: uploadedFile ? 0 : recordingDuration, 
-          folderId: 'unorganized', 
+          folderId: activeFolderId === 'all' ? 'unorganized' : (activeFolderId || 'unorganized'),
           sourceType: uploadedFile ? 'upload' : 'record' 
         };
         const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'meetings'), meetingData);
         setCurrentMeeting({ id: docRef.id, ...meetingData });
         setEditBuffer({ ...meetingData });
         setView('detail');
-      } catch (err) { setError("AI Analysis failed."); }
+      } catch (err) { setError("AI Analysis failed. Please try a shorter clip."); }
       setIsProcessing(false);
     };
   };
-
-  const filteredHistory = useMemo(() => {
-    let base = history;
-    if (activeFolderId !== 'all') base = base.filter(m => activeFolderId ? m.folderId === activeFolderId : (m.folderId === 'unorganized' || !m.folderId));
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      base = base.filter(m => m.title.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q));
-    }
-    return base;
-  }, [history, activeFolderId, searchTerm]);
 
   const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2, '0')}`;
   const resolveSpeaker = (t) => {
@@ -253,8 +258,8 @@ const App = () => {
             <div className="p-2 bg-indigo-600 rounded-xl text-white shadow-sm"><LayoutDashboard size={18} /></div>
             <h1 className="font-bold text-lg tracking-tight">Meeting Pro</h1>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-            <nav className="space-y-1 text-xs font-bold">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 text-xs font-bold">
+            <nav className="space-y-1">
                 <button onClick={() => { setActiveFolderId('all'); setView('dashboard'); }} className={`w-full text-left px-3 py-2 rounded-lg ${activeFolderId === 'all' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>All Meetings</button>
                 <button onClick={() => { setActiveFolderId(null); setView('dashboard'); }} className={`w-full text-left px-3 py-2 rounded-lg ${activeFolderId === null ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>Unorganized</button>
             </nav>
@@ -266,7 +271,7 @@ const App = () => {
                 <div className="space-y-1">
                     {folders.map(f => (
                         <div key={f.id} className="group relative">
-                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
+                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
                             <button onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'folders', f.id)); }} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"><X size={12}/></button>
                         </div>
                     ))}
@@ -288,13 +293,13 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-8">
             {view === 'dashboard' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredHistory.map(m => (
+                    {history.filter(m => activeFolderId === 'all' ? true : m.folderId === (activeFolderId || 'unorganized')).filter(m => m.title.toLowerCase().includes(searchTerm.toLowerCase())).map(m => (
                         <div key={m.id} onClick={() => { setCurrentMeeting(m); setEditBuffer(m); setView('detail'); }} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-all">
                             <h3 className="font-bold text-slate-800 line-clamp-1">{m.title}</h3>
                             <div className="text-[10px] text-slate-400 mt-2 font-bold uppercase">{new Date(m.timestamp).toLocaleDateString()} • {formatTime(m.duration)}</div>
                         </div>
                     ))}
-                    {filteredHistory.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings yet. Start one to begin!</div>}
+                    {history.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings yet. Start one to begin!</div>}
                 </div>
             ) : view === 'record' ? (
                 <div className="max-w-xl mx-auto py-12 text-center bg-white p-12 rounded-[3rem] shadow-xl">
@@ -308,11 +313,11 @@ const App = () => {
                         <div className="space-y-6">
                             <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto"><CheckCircle2 size={40} /></div>
                             <h2 className="text-3xl font-black text-slate-900">Audio Ready</h2>
-                            <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
+                            <button onClick={processInput} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            <button onClick={startRecording} className="w-full py-8 bg-indigo-600 text-white rounded-[2rem] font-bold text-xl">Live Record</button>
+                            <button onClick={startRecording} className="w-full py-8 bg-indigo-600 text-white rounded-[2rem] font-bold text-xl">Start Recording</button>
                             <input type="file" ref={fileInputRef} onChange={e => { setUploadedFile(e.target.files[0]); setAudioBlob(null); }} className="hidden" />
                             <button onClick={() => fileInputRef.current.click()} className="w-full py-8 bg-slate-100 text-slate-600 rounded-[2rem] font-bold text-xl border-2 border-dashed border-slate-200">Upload File</button>
                         </div>
