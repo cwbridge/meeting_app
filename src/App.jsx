@@ -12,8 +12,23 @@ import {
 } from 'lucide-react';
 
 // --- Configuration Recovery ---
-const rawConfig = process.env.REACT_APP_FIREBASE_CONFIG;
-const rawAiKey = process.env.REACT_APP_GEMINI_API_KEY;
+/**
+ * CRITICAL FIX: To prevent "process is not defined" errors in various environments,
+ * we check for the existence of the process object before accessing it.
+ */
+const getSafeEnv = (key) => {
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env[key];
+    }
+  } catch (e) {
+    // Fallback for environments where process access is restricted
+  }
+  return undefined;
+};
+
+const rawConfig = getSafeEnv('REACT_APP_FIREBASE_CONFIG');
+const rawAiKey = getSafeEnv('REACT_APP_GEMINI_API_KEY');
 
 const getFirebaseConfig = () => {
   if (!rawConfig) return null;
@@ -32,7 +47,6 @@ const getFirebaseConfig = () => {
     return JSON.parse(cleaned);
   } catch (e) {
     // 4. Emergency fallback: try to extract keys manually if JSON.parse fails
-    // This handles cases where the string is "dirty" but contains the info we need
     try {
         const extract = (key) => {
             const match = rawConfig.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
@@ -103,9 +117,13 @@ const App = () => {
   // LOG STATUS FOR DEBUGGING
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Firebase String Length:", rawConfig?.length);
-    console.log("Firebase Config Object Created:", !!firebaseConfig);
-    console.log("Gemini API Key Detected:", !!rawAiKey);
+    console.log("Firebase String Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
+    console.log("Gemini API Key Received:", rawAiKey ? "Yes" : "No");
+    
+    if (rawConfig) {
+        const parsed = getFirebaseConfig();
+        console.log("Firebase Config Parsed Successfully:", !!parsed);
+    }
   }, []);
 
   // Error Guard for missing Environment Variables
@@ -241,7 +259,7 @@ const App = () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`, {
           method: 'POST',
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
+            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: source.type || "audio/mpeg", data: base64 } }] }],
             generationConfig: { responseMimeType: "application/json" }
           })
         });
