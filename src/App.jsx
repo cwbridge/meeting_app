@@ -74,8 +74,7 @@ const App = () => {
           <p className="text-slate-500 mb-6">
             The application is missing its API keys. Please ensure you have added 
             <code className="bg-slate-100 px-1 rounded">REACT_APP_FIREBASE_CONFIG</code> and 
-            <code className="bg-slate-100 px-1 rounded">REACT_APP_GEMINI_API_KEY</code> 
-            to your Vercel Environment Variables.
+            <code className="bg-slate-100 px-1 rounded">REACT_APP_GEMINI_API_KEY</code> to your Vercel Environment Variables.
           </p>
           <a 
             href="https://vercel.com" 
