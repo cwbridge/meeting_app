@@ -51,13 +51,12 @@ const App = () => {
   const [audioBlob, setAudioBlob] = useState(null);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [bookmarks, setBookmarks] = useState([]);
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentMeeting, setCurrentMeeting] = useState(null);
   const [editBuffer, setEditBuffer] = useState(null);
-  const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState(null);
+  const [authError, setAuthError] = useState(null);
   const [speakerMap, setSpeakerMap] = useState({});
 
   const mediaRecorderRef = useRef(null);
@@ -81,8 +80,39 @@ const App = () => {
     );
   }
 
+  // Auth Error UI
+  if (authError) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-6">
+        <div className="bg-white p-10 rounded-[2.5rem] shadow-xl border border-amber-100 max-w-lg text-center">
+          <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Settings size={32} />
+          </div>
+          <h1 className="text-2xl font-black text-slate-900 mb-4 tracking-tight">Security Setup Required</h1>
+          <p className="text-slate-500 mb-8 leading-relaxed">
+            Firebase says <strong>Anonymous Auth</strong> is disabled. To fix this:
+          </p>
+          <div className="text-left bg-slate-50 p-6 rounded-2xl text-xs font-bold text-slate-600 space-y-3 border border-slate-100 mb-8">
+            <p>1. Go to Firebase Console</p>
+            <p>2. Select Authentication {">"} Sign-in method</p>
+            <p>3. Click "Add new provider" {">"} select "Anonymous"</p>
+            <p>4. Toggle "Enable" and click "Save"</p>
+          </div>
+          <button onClick={() => window.location.reload()} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg shadow-indigo-100">
+            I've enabled it, Refresh Page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
+    signInAnonymously(auth).catch(err => {
+      if (err.code === 'auth/configuration-not-found') {
+        setAuthError(true);
+      }
+      console.error("Auth Error:", err);
+    });
     return onAuthStateChanged(auth, setUser);
   }, []);
 
@@ -219,6 +249,7 @@ const App = () => {
                             <div className="text-[10px] text-slate-400 mt-2 font-bold">{new Date(m.timestamp).toLocaleDateString()} • {formatTime(m.duration)}</div>
                         </div>
                     ))}
+                    {filteredHistory.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic">No meetings found.</div>}
                 </div>
             ) : view === 'record' ? (
                 <div className="max-w-md mx-auto py-12 text-center bg-white p-10 rounded-[2.5rem] shadow-xl border border-slate-50">
