@@ -12,37 +12,25 @@ import {
 } from 'lucide-react';
 
 // --- Production Configuration Recovery ---
-// Safety helper to prevent "process is not defined" errors in the browser/preview
-const getSafeEnv = (key) => {
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env[key];
-    }
-  } catch (e) {
-    // Ignore access errors
-  }
-  return undefined;
-};
-
-const rawConfig = getSafeEnv('REACT_APP_FIREBASE_CONFIG');
-const rawAiKey = getSafeEnv('REACT_APP_GEMINI_API_KEY');
+const rawConfig = process.env.REACT_APP_FIREBASE_CONFIG;
+const rawAiKey = process.env.REACT_APP_GEMINI_API_KEY;
 
 const getFirebaseConfig = () => {
   if (!rawConfig) return null;
   try {
     if (typeof rawConfig === 'object') return rawConfig;
-    let cleaned = String(rawConfig).trim();
+    let cleaned = rawConfig.trim();
     if (cleaned.startsWith('"') && cleaned.endsWith('"')) cleaned = cleaned.substring(1, cleaned.length - 1);
     cleaned = cleaned.replace(/\\"/g, '"');
     return JSON.parse(cleaned);
   } catch (e) {
-    // Fallback extraction for malformed JSON strings
+    // Fallback extraction
     try {
       const extract = (key) => {
         const match = String(rawConfig).match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
         return match ? match[1] : null;
       };
-      const fallback = {
+      return {
         apiKey: extract("apiKey"),
         authDomain: extract("authDomain"),
         projectId: extract("projectId"),
@@ -50,7 +38,6 @@ const getFirebaseConfig = () => {
         messagingSenderId: extract("messagingSenderId"),
         appId: extract("appId")
       };
-      return fallback.apiKey ? fallback : null;
     } catch (err) { return null; }
   }
 };
@@ -63,13 +50,9 @@ const appId = "meeting-notes-pro-prod";
 // Initialize services
 let app, auth, db;
 if (firebaseConfig && firebaseConfig.apiKey) {
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (e) {
-    console.error("Firebase init failed:", e);
-  }
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
 }
 
 const App = () => {
@@ -231,13 +214,7 @@ const App = () => {
     return r;
   };
 
-  if (!firebaseConfig || !apiKey) return (
-    <div className="flex flex-col h-screen items-center justify-center bg-slate-50 font-bold p-8 text-center">
-      <div className="text-red-500 mb-2">Config Missing in Environment</div>
-      <div className="text-xs text-slate-500 max-w-sm">Please ensure REACT_APP_FIREBASE_CONFIG and REACT_APP_GEMINI_API_KEY are set in your provider's settings (Netlify/Vercel).</div>
-    </div>
-  );
-  
+  if (!firebaseConfig || !apiKey) return <div className="flex h-screen items-center justify-center bg-slate-50 font-bold text-red-500">Config Missing in Netlify</div>;
   if (authError) return <div className="flex h-screen items-center justify-center bg-slate-50 font-bold text-amber-600 p-8 text-center">Anonymous Auth is disabled in Firebase Console.</div>;
   if (!user) return <div className="flex h-screen items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-600" /></div>;
 
