@@ -13,22 +13,11 @@ import {
 
 // --- Configuration Recovery ---
 /**
- * CRITICAL FIX: To prevent "process is not defined" errors in various environments,
- * we check for the existence of the process object before accessing it.
+ * CRITICAL FIX: React build tools (react-scripts/Webpack) do not support dynamic 
+ * lookups like process.env[key]. We MUST access them using the full literal string.
  */
-const safeGetEnv = (key) => {
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env[key];
-    }
-  } catch (e) {
-    // Fallback for strict environments
-  }
-  return undefined;
-};
-
-const rawConfig = safeGetEnv('REACT_APP_FIREBASE_CONFIG');
-const rawAiKey = safeGetEnv('REACT_APP_GEMINI_API_KEY');
+const rawConfig = process.env.REACT_APP_FIREBASE_CONFIG;
+const rawAiKey = process.env.REACT_APP_GEMINI_API_KEY;
 
 const getFirebaseConfig = () => {
   try {
@@ -88,7 +77,7 @@ const App = () => {
   // LOG STATUS FOR DEBUGGING (Visible in Browser Console)
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Firebase Config Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
+    console.log("Firebase Config String Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
     console.log("Gemini API Key Received:", rawAiKey ? "Yes" : "No");
     
     if (rawConfig) {
@@ -107,7 +96,7 @@ const App = () => {
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
           <p className="text-slate-500 mb-8 leading-relaxed">
-            Your application deployed successfully, but the environment variables are not accessible. 
+            Your application deployed successfully, but Vercel is not passing the keys to the React build. 
           </p>
           
           <div className="grid grid-cols-1 gap-3 mb-8 text-left">
@@ -122,12 +111,12 @@ const App = () => {
           </div>
 
           <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-left text-xs text-amber-800 mb-8">
-            <p className="font-bold mb-1">Troubleshooting Checklist:</p>
+            <p className="font-bold mb-1">How to fix:</p>
             <ol className="list-decimal ml-4 space-y-1">
-                <li>Go to Vercel Settings {">"} Environment Variables.</li>
-                <li>Ensure the Key names match exactly as shown above.</li>
-                <li>Go to the Deployments tab and select <strong>Redeploy</strong>.</li>
-                <li>Ensure <strong>"Use existing Build Cache"</strong> is unchecked.</li>
+                <li>Verify Key names are <strong>EXACTLY</strong> as shown above.</li>
+                <li>Verify they are in the <strong>Production</strong> environment in Vercel.</li>
+                <li>Go to <strong>Deployments</strong> {">"} Click <strong>"Redeploy"</strong>.</li>
+                <li><strong>IMPORTANT:</strong> Uncheck "Use existing Build Cache".</li>
             </ol>
           </div>
 
