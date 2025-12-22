@@ -13,17 +13,32 @@ import {
 
 // --- Configuration Recovery ---
 /**
- * CRITICAL FIX: React build tools (react-scripts/Webpack) do not support dynamic 
- * lookups like process.env[key]. We MUST access them using the full literal string.
+ * CRITICAL FIX: Safe access to process.env to avoid "process is not defined" 
+ * in browsers or environments that do not inject it globally.
  */
-const rawConfig = process.env.REACT_APP_FIREBASE_CONFIG;
-const rawAiKey = process.env.REACT_APP_GEMINI_API_KEY;
+const safeEnv = (key) => {
+  try {
+    return typeof process !== 'undefined' && process.env ? process.env[key] : undefined;
+  } catch (e) {
+    return undefined;
+  }
+};
+
+const rawConfig = safeEnv('REACT_APP_FIREBASE_CONFIG');
+const rawAiKey = safeEnv('REACT_APP_GEMINI_API_KEY');
 
 const getFirebaseConfig = () => {
+  if (!rawConfig) return null;
   try {
-    return rawConfig ? JSON.parse(rawConfig) : null;
+    // 1. Trim whitespace
+    // 2. Remove potential surrounding literal quotes if they were pasted into Vercel
+    let cleaned = rawConfig.trim();
+    if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+      cleaned = cleaned.substring(1, cleaned.length - 1);
+    }
+    return JSON.parse(cleaned);
   } catch (e) {
-    console.error("Firebase Config JSON is invalid. Ensure it's a clean JSON object.");
+    console.error("Firebase Config JSON is invalid. Error:", e.message);
     return null;
   }
 };
@@ -74,16 +89,18 @@ const App = () => {
   const analyserRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // LOG STATUS FOR DEBUGGING (Visible in Browser Console)
+  // LOG STATUS FOR DEBUGGING
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Firebase Config String Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
-    console.log("Gemini API Key Received:", rawAiKey ? "Yes" : "No");
-    
+    console.log("Raw Firebase String Length:", rawConfig?.length);
     if (rawConfig) {
-        const parsed = getFirebaseConfig();
-        console.log("Firebase Config Parsed Successfully:", !!parsed);
+        const firstChar = rawConfig.trim().charAt(0);
+        const lastChar = rawConfig.trim().charAt(rawConfig.trim().length - 1);
+        console.log("Starts with:", firstChar, "Ends with:", lastChar);
+        if (firstChar !== '{') console.warn("WARNING: Config does not start with {. Check Vercel value for extra quotes.");
     }
+    const parsed = getFirebaseConfig();
+    console.log("Firebase Config Parsed Successfully:", !!parsed);
   }, []);
 
   // Error Guard for missing Environment Variables
@@ -96,36 +113,36 @@ const App = () => {
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
           <p className="text-slate-500 mb-8 leading-relaxed">
-            Your application deployed successfully, but Vercel is not passing the keys to the React build. 
+            The data Vercel is sending isn't quite right. The "Firebase Config" is arriving, but it's not in a format the app can read.
           </p>
           
           <div className="grid grid-cols-1 gap-3 mb-8 text-left">
-             <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawConfig ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
-                <span className="text-xs font-bold uppercase tracking-widest font-mono">REACT_APP_FIREBASE_CONFIG</span>
-                {rawConfig ? <CheckCircle2 size={18}/> : <X size={18}/>}
+             <div className={`p-4 rounded-2xl border flex flex-col gap-1 ${rawConfig ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-widest font-mono">Firebase Config</span>
+                    {firebaseConfig ? <CheckCircle2 size={18} className="text-emerald-500"/> : <AlertCircle size={18}/>}
+                </div>
+                {!firebaseConfig && rawConfig && (
+                    <p className="text-[10px] font-bold opacity-70">Error: String received but failed to parse. Likely contains extra quotes or invisible characters.</p>
+                )}
              </div>
              <div className={`p-4 rounded-2xl border flex items-center justify-between ${rawAiKey ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
-                <span className="text-xs font-bold uppercase tracking-widest font-mono">REACT_APP_GEMINI_API_KEY</span>
+                <span className="text-xs font-bold uppercase tracking-widest font-mono">Gemini API Key</span>
                 {rawAiKey ? <CheckCircle2 size={18}/> : <X size={18}/>}
              </div>
           </div>
 
-          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-left text-xs text-amber-800 mb-8">
-            <p className="font-bold mb-1">How to fix:</p>
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 text-left text-xs text-indigo-800 mb-8">
+            <p className="font-bold mb-1">Quick Fix Strategy:</p>
             <ol className="list-decimal ml-4 space-y-1">
-                <li>Verify Key names are <strong>EXACTLY</strong> as shown above.</li>
-                <li>Verify they are in the <strong>Production</strong> environment in Vercel.</li>
-                <li>Go to <strong>Deployments</strong> {">"} Click <strong>"Redeploy"</strong>.</li>
-                <li><strong>IMPORTANT:</strong> Uncheck "Use existing Build Cache".</li>
+                <li>Go to Vercel Environment Variables.</li>
+                <li>Edit <strong>REACT_APP_FIREBASE_CONFIG</strong>.</li>
+                <li>Delete the value and paste it as a <strong>single line</strong>.</li>
+                <li>Make sure there are <strong>NO</strong> double quotes surrounding the curly braces.</li>
             </ol>
           </div>
 
-          <a 
-            href="https://vercel.com" 
-            target="_blank" 
-            rel="noreferrer"
-            className="w-full inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 transition-all"
-          >
+          <a href="https://vercel.com" target="_blank" rel="noreferrer" className="w-full inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 transition-all">
             Open Vercel Dashboard
           </a>
         </div>
@@ -137,7 +154,7 @@ const App = () => {
     if (auth) {
         signInAnonymously(auth).catch(err => {
             console.error("Auth Error:", err);
-            setError("Firebase Auth failed. Check your API key and Project ID.");
+            setError("Firebase Auth failed. Check your API key.");
         });
         return onAuthStateChanged(auth, setUser);
     }
@@ -226,7 +243,7 @@ const App = () => {
         setCurrentMeeting({ id: docRef.id, ...meetingData });
         setEditBuffer({ ...meetingData });
         setView('detail');
-      } catch (err) { setError("AI Analysis failed. Please try a shorter clip."); }
+      } catch (err) { setError("AI Analysis failed."); }
       setIsProcessing(false);
     };
   };
@@ -260,7 +277,7 @@ const App = () => {
                 <div className="space-y-1">
                     {folders.map(f => (
                         <div key={f.id} className="group relative">
-                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
+                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
                             <button onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'folders', f.id)); }} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"><X size={12}/></button>
                         </div>
                     ))}
@@ -288,7 +305,7 @@ const App = () => {
                             <div className="text-[10px] text-slate-400 mt-2 font-bold uppercase">{new Date(m.timestamp).toLocaleDateString()} • {formatTime(m.duration)}</div>
                         </div>
                     ))}
-                    {history.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings yet. Start one to begin!</div>}
+                    {history.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings found.</div>}
                 </div>
             ) : view === 'record' ? (
                 <div className="max-w-xl mx-auto py-12 text-center bg-white p-12 rounded-[3rem] shadow-xl">
@@ -302,7 +319,7 @@ const App = () => {
                         <div className="space-y-6">
                             <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto"><CheckCircle2 size={40} /></div>
                             <h2 className="text-3xl font-black text-slate-900">Audio Ready</h2>
-                            <button onClick={processInput} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
+                            <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl">{isProcessing ? "Analyzing..." : "Analyze Audio"}</button>
                         </div>
                     ) : (
                         <div className="space-y-8">
