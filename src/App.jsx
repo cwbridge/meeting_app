@@ -12,17 +12,14 @@ import {
 } from 'lucide-react';
 
 // --- Configuration Recovery ---
-/**
- * CRITICAL FIX: To prevent "process is not defined" errors in various environments,
- * we check for the existence of the process object before accessing it.
- */
+// Safety helper to avoid "process is not defined" ReferenceErrors
 const getSafeEnv = (key) => {
   try {
     if (typeof process !== 'undefined' && process.env) {
       return process.env[key];
     }
   } catch (e) {
-    // Fallback for environments where process access is restricted
+    // Fallback if process access is restricted
   }
   return undefined;
 };
@@ -32,40 +29,48 @@ const rawAiKey = getSafeEnv('REACT_APP_GEMINI_API_KEY');
 
 const getFirebaseConfig = () => {
   if (!rawConfig) return null;
-  try {
-    // 1. Basic cleaning
-    let cleaned = rawConfig.trim();
-    
-    // 2. Remove surrounding double-quotes that Vercel sometimes adds
-    if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-      cleaned = cleaned.substring(1, cleaned.length - 1);
-    }
-    
-    // 3. Handle escaped quotes if the build tool double-escaped them
-    cleaned = cleaned.replace(/\\"/g, '"');
-    
-    return JSON.parse(cleaned);
-  } catch (e) {
-    // 4. Emergency fallback: try to extract keys manually if JSON.parse fails
+  
+  // CASE 1: Build tool injected it as an Object Literal
+  if (typeof rawConfig === 'object' && rawConfig !== null) {
+    return rawConfig;
+  }
+
+  // CASE 2: Build tool injected it as a String (Standard JSON)
+  if (typeof rawConfig === 'string') {
     try {
+      let cleaned = rawConfig.trim();
+      
+      // Remove surrounding double-quotes if the build tool wrapped the JSON in quotes
+      if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+        cleaned = cleaned.substring(1, cleaned.length - 1);
+      }
+      
+      // Handle escaped quotes
+      cleaned = cleaned.replace(/\\"/g, '"');
+      
+      return JSON.parse(cleaned);
+    } catch (e) {
+      // Emergency Manual Extraction if JSON.parse fails
+      try {
         const extract = (key) => {
-            const match = rawConfig.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
-            return match ? match[1] : null;
+          const match = rawConfig.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+          return match ? match[1] : null;
         };
         const fallback = {
-            apiKey: extract("apiKey"),
-            authDomain: extract("authDomain"),
-            projectId: extract("projectId"),
-            storageBucket: extract("storageBucket"),
-            messagingSenderId: extract("messagingSenderId"),
-            appId: extract("appId")
+          apiKey: extract("apiKey"),
+          authDomain: extract("authDomain"),
+          projectId: extract("projectId"),
+          storageBucket: extract("storageBucket"),
+          messagingSenderId: extract("messagingSenderId"),
+          appId: extract("appId")
         };
         if (fallback.apiKey && fallback.projectId) return fallback;
-    } catch (err) {
+      } catch (err) {
         return null;
+      }
     }
-    return null;
   }
+  return null;
 };
 
 const firebaseConfig = getFirebaseConfig();
@@ -93,12 +98,14 @@ const App = () => {
   const [folders, setFolders] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Input State
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [bookmarks, setBookmarks] = useState([]);
   
+  // AI/Edit State
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentMeeting, setCurrentMeeting] = useState(null);
   const [editBuffer, setEditBuffer] = useState(null);
@@ -106,6 +113,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [speakerMap, setSpeakerMap] = useState({});
 
+  // Refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
@@ -114,16 +122,12 @@ const App = () => {
   const analyserRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // LOG STATUS FOR DEBUGGING
+  // Debug Logs
   useEffect(() => {
     console.log("--- Meeting Pro Debug Status ---");
-    console.log("Firebase String Received:", rawConfig ? "Yes (length: " + rawConfig.length + ")" : "No");
-    console.log("Gemini API Key Received:", rawAiKey ? "Yes" : "No");
-    
-    if (rawConfig) {
-        const parsed = getFirebaseConfig();
-        console.log("Firebase Config Parsed Successfully:", !!parsed);
-    }
+    console.log("Raw Config Type:", typeof rawConfig);
+    console.log("Firebase Config Object Valid:", !!firebaseConfig);
+    console.log("Gemini API Key Detected:", !!rawAiKey);
   }, []);
 
   // Error Guard for missing Environment Variables
@@ -136,7 +140,7 @@ const App = () => {
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Configuration Error</h1>
           <p className="text-slate-500 mb-8 leading-relaxed">
-            The data is reaching the app, but the format is preventing it from starting.
+            The app is connected to Vercel, but the security keys are still not being parsed correctly.
           </p>
           
           <div className="grid grid-cols-1 gap-3 mb-8 text-left">
@@ -146,8 +150,8 @@ const App = () => {
                     {firebaseConfig ? <CheckCircle2 size={18} className="text-emerald-500"/> : <AlertCircle size={18}/>}
                 </div>
                 {!firebaseConfig && rawConfig && (
-                    <div className="mt-2 text-[10px] font-mono bg-white/50 p-2 rounded border border-amber-200 overflow-x-auto whitespace-pre">
-                      {rawConfig.substring(0, 50)}...
+                    <div className="mt-2 p-2 bg-white/50 rounded text-[10px] font-mono break-all border border-amber-200">
+                      Format: {typeof rawConfig} | Start: {String(rawConfig).substring(0, 15)}...
                     </div>
                 )}
              </div>
@@ -158,21 +162,24 @@ const App = () => {
           </div>
 
           <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 text-left text-xs text-indigo-800 mb-8">
-            <p className="font-bold mb-2 uppercase tracking-wider">Final Verification:</p>
-            <p className="mb-4">Inside the Vercel Value box for <strong>REACT_APP_FIREBASE_CONFIG</strong>, ensure the string looks exactly like this (no outer quotes):</p>
-            <code className="block bg-white p-3 rounded-lg border border-indigo-200 overflow-x-auto select-all">
-              {"{\"apiKey\":\"...\",\"authDomain\":\"...\"}"}
-            </code>
+            <p className="font-bold mb-2">Final Attempt Strategy:</p>
+            <ol className="list-decimal ml-4 space-y-2">
+                <li>Delete <strong>REACT_APP_FIREBASE_CONFIG</strong> from Vercel.</li>
+                <li>Add it again using <strong>exactly</strong> the single-line string provided previously.</li>
+                <li>Ensure there are <strong>NO spaces</strong> at the very end of the line.</li>
+                <li><strong>Redeploy</strong> in Vercel with <strong>Build Cache DISABLED</strong>.</li>
+            </ol>
           </div>
 
           <a href="https://vercel.com" target="_blank" rel="noreferrer" className="w-full inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 transition-all">
-            Redeploy (No Build Cache)
+            Open Vercel Dashboard
           </a>
         </div>
       </div>
     );
   }
 
+  // Auth & Cloud Sync
   useEffect(() => {
     if (auth) {
         signInAnonymously(auth).catch(err => {
@@ -194,6 +201,7 @@ const App = () => {
     return () => { unsubM(); unsubF(); unsubS(); };
   }, [user]);
 
+  // Recording Logic
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => setRecordingDuration(p => p + 1), 1000);
@@ -210,13 +218,11 @@ const App = () => {
       audioChunksRef.current = [];
       setBookmarks([]);
       setUploadedFile(null);
-
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
       analyserRef.current = audioCtx.createAnalyser();
       source.connect(analyserRef.current);
       drawVisualizer();
-
       mediaRecorderRef.current.ondataavailable = e => audioChunksRef.current.push(e.data);
       mediaRecorderRef.current.onstop = () => {
         setAudioBlob(new Blob(audioChunksRef.current, { type: 'audio/webm' }));
@@ -225,7 +231,7 @@ const App = () => {
       mediaRecorderRef.current.start();
       setIsRecording(true);
       setError(null);
-    } catch (err) { setError("Microphone access denied."); }
+    } catch (err) { setError("Mic access denied."); }
   };
 
   const drawVisualizer = () => {
@@ -259,7 +265,7 @@ const App = () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`, {
           method: 'POST',
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: source.type || "audio/mpeg", data: base64 } }] }],
+            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] }],
             generationConfig: { responseMimeType: "application/json" }
           })
         });
@@ -280,6 +286,18 @@ const App = () => {
       setIsProcessing(false);
     };
   };
+
+  const filteredHistory = useMemo(() => {
+    let base = history;
+    if (activeFolderId !== 'all') {
+      base = history.filter(m => activeFolderId ? m.folderId === activeFolderId : (m.folderId === 'unorganized' || !m.folderId));
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      base = base.filter(m => m.title.toLowerCase().includes(q) || m.summary?.toLowerCase().includes(q));
+    }
+    return base;
+  }, [history, activeFolderId, searchTerm]);
 
   const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2, '0')}`;
   const resolveSpeaker = (text) => {
@@ -311,8 +329,8 @@ const App = () => {
                 <div className="space-y-1">
                     {folders.map(f => (
                         <div key={f.id} className="group relative">
-                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-bold ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
-                            <button onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'folders', f.id)); }} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"><X size={12}/></button>
+                            <button onClick={() => { setActiveFolderId(f.id); setView('dashboard'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg ${activeFolderId === f.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><Folder size={14}/><span className="truncate pr-4">{f.name}</span></button>
+                            <button onClick={(e) => { e.stopPropagation(); if(confirm("Delete folder?")) deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'folders', f.id)); }} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"><X size={12}/></button>
                         </div>
                     ))}
                 </div>
@@ -333,13 +351,13 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-8">
             {view === 'dashboard' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {history.filter(m => activeFolderId === 'all' ? true : m.folderId === (activeFolderId || 'unorganized')).filter(m => m.title.toLowerCase().includes(searchTerm.toLowerCase())).map(m => (
+                    {filteredHistory.map(m => (
                         <div key={m.id} onClick={() => { setCurrentMeeting(m); setEditBuffer(m); setView('detail'); }} className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-all">
                             <h3 className="font-bold text-slate-800 line-clamp-1">{m.title}</h3>
                             <div className="text-[10px] text-slate-400 mt-2 font-bold uppercase">{new Date(m.timestamp).toLocaleDateString()} • {formatTime(m.duration)}</div>
                         </div>
                     ))}
-                    {history.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings found.</div>}
+                    {filteredHistory.length === 0 && <div className="col-span-full py-20 text-center text-slate-300 italic text-sm font-medium">No meetings found.</div>}
                 </div>
             ) : view === 'record' ? (
                 <div className="max-w-xl mx-auto py-12 text-center bg-white p-12 rounded-[3rem] shadow-xl">
