@@ -3,6 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
+  signInWithCustomToken, 
   onAuthStateChanged 
 } from 'firebase/auth';
 import { 
@@ -11,6 +12,7 @@ import {
   doc, 
   setDoc, 
   onSnapshot, 
+  query, 
   addDoc, 
   deleteDoc, 
   updateDoc 
@@ -23,32 +25,19 @@ import {
 } from 'lucide-react';
 
 /**
- * CONFIGURATION
- * This block handles both local/Netlify environments and the internal preview.
+ * CONFIGURATION & INITIALIZATION
+ * * PREVIEW MODE: Uses __firebase_config and const apiKey = ""
+ * NETLIFY MODE: Replace with process.env.REACT_APP_FIREBASE_CONFIG and process.env.REACT_APP_GEMINI_API_KEY
  */
-const getFirebaseConfig = () => {
-  // Check for preview global first, then process.env for Netlify/Local
-  const raw = typeof __firebase_config !== 'undefined' ? __firebase_config : process.env.REACT_APP_FIREBASE_CONFIG;
-  if (!raw) return null;
-  try {
-    return typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch (e) {
-    return null;
-  }
-};
-
-const firebaseConfig = getFirebaseConfig();
-// Use the environment variable for Netlify, or empty string for the internal preview system
-const apiKey = (typeof process !== 'undefined' && process.env.REACT_APP_GEMINI_API_KEY) || ""; 
-const appId = typeof __app_id !== 'undefined' ? __app_id : (process.env.REACT_APP_ID || "meeting-notes-pro-prod");
+const firebaseConfig = JSON.parse(__firebase_config); 
+const apiKey = process.env.REACT_APP_GEMINI_API_KEY || ""; // DO NOT CHANGE THIS FOR THE PREVIEW. For Netlify/GitHub, use process.env.REACT_APP_GEMINI_API_KEY
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'meeting-notes-pro-prod';
 const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
 
-let app, auth, db;
-if (firebaseConfig) {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
+// Initialize services
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -58,18 +47,21 @@ const App = () => {
   const [folders, setFolders] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Input State
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [error, setError] = useState(null);
   
+  // AI/Edit State
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentMeeting, setCurrentMeeting] = useState(null);
   const [editBuffer, setEditBuffer] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [speakerMap, setSpeakerMap] = useState({});
 
+  // Refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
@@ -79,32 +71,45 @@ const App = () => {
   const fileInputRef = useRef(null);
   const streamRef = useRef(null);
 
+  // Authentication: Rule 3
   useEffect(() => {
-    if (!auth) return;
-    signInAnonymously(auth).catch(err => console.error("Auth failed:", err));
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
+  // Data Fetching: Rules 1 & 2
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user) return;
+
     const meetingsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'meetings');
     const unsubM = onSnapshot(meetingsRef, (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
       setHistory(data.sort((a,b) => b.timestamp - a.timestamp));
-    });
+    }, (err) => console.error(err));
+
     const foldersRef = collection(db, 'artifacts', appId, 'users', user.uid, 'folders');
     const unsubF = onSnapshot(foldersRef, (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
       setFolders(data.sort((a,b) => a.name.localeCompare(b.name)));
     });
+
     const sRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
     const unsubS = onSnapshot(sRef, (d) => {
       if (d.exists()) setSpeakerMap(d.data().speakerMap || {});
     });
+
     return () => { unsubM(); unsubF(); unsubS(); };
   }, [user]);
 
+  // Recording Timer
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => setRecordingDuration(p => p + 1), 1000);
@@ -119,13 +124,10 @@ const App = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : 'audio/webm';
-        
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      
       setUploadedFile(null);
       setAudioBlob(null);
       setError(null);
@@ -137,16 +139,11 @@ const App = () => {
       drawVisualizer();
 
       mediaRecorder.ondataavailable = e => {
-        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
       mediaRecorder.onstop = () => {
-        if (audioChunksRef.current.length === 0) {
-            setError("No audio captured. Check mic.");
-            setIsRecording(false);
-            return;
-        }
-        const blob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setAudioBlob(blob);
         setIsRecording(false);
         if (streamRef.current) {
@@ -156,11 +153,11 @@ const App = () => {
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       };
 
-      mediaRecorder.start(1000);
+      mediaRecorder.start(1000); // 1s timeslices to ensure stable data flow
       setIsRecording(true);
       setRecordingDuration(0);
     } catch (err) { 
-      setError("Mic access failed: " + err.message); 
+      setError("Microphone access denied. Please check browser permissions."); 
     }
   };
 
@@ -197,22 +194,19 @@ const App = () => {
     const reader = new FileReader();
     reader.readAsDataURL(source);
     reader.onloadend = async () => {
+      const base64 = reader.result.split(',')[1];
+      const prompt = `You are a high-precision meeting assistant. Analyze the provided audio. 
+      Return a JSON object with this EXACT structure:
+      {
+        "title": "Concise title",
+        "summary": "2-3 paragraph summary",
+        "keyPoints": ["point 1", "point 2"],
+        "actionItems": [{"owner": "Person", "task": "Action"}],
+        "transcript": "Full verbatim transcript with Speaker labels"
+      }`;
+
       try {
-        const base64 = reader.result.split(',')[1];
-        const prompt = `Listen carefully to this audio. Provide a full transcription and analysis.
-        Return ONLY a JSON object with this exact structure:
-        {
-          "title": "Meeting Title",
-          "summary": "Detailed summary",
-          "keyPoints": ["point 1", "point 2"],
-          "actionItems": [{"owner": "Name", "task": "Action"}],
-          "transcript": "Full transcript with speaker labels"
-        }`;
-
-        // Construction of the API URL with fallback for empty key in preview
-        const apiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
-
-        const res = await fetch(apiEndpoint, {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -224,21 +218,15 @@ const App = () => {
         const result = await res.json();
         
         if (result.error) {
-            if (result.error.message.includes("API Key")) {
-                throw new Error("Missing or invalid API Key. Please check your Netlify environment variables.");
-            }
-            throw new Error(result.error.message || "API Error");
+          throw new Error(result.error.message || "API connection failed.");
         }
 
         const candidate = result.candidates?.[0];
-        if (!candidate || !candidate.content || !candidate.content.parts?.[0]?.text) {
+        if (!candidate || !candidate.content) {
           throw new Error("AI analysis could not extract content. Try a longer recording.");
         }
 
-        let rawText = candidate.content.parts[0].text;
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) rawText = jsonMatch[0];
-
+        const rawText = candidate.content.parts[0].text;
         const data = JSON.parse(rawText);
         
         const meetingData = { 
@@ -282,7 +270,6 @@ const App = () => {
     return base;
   }, [history, activeFolderId, searchTerm]);
 
-  if (!firebaseConfig) return <div className="p-10 text-red-500 font-bold">Firebase Configuration Error.</div>;
   if (!user) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-600" size={32} /></div>;
 
   return (
@@ -343,7 +330,7 @@ const App = () => {
                     ) : (audioBlob || uploadedFile) ? (
                         <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
                             <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-inner"><CheckCircle2 size={40} /></div>
-                            <h2 className="text-3xl font-black text-slate-900">Audio Captured</h2>
+                            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Audio Captured</h2>
                             <p className="text-slate-500 text-sm">Session: {uploadedFile?.name || 'Live Recording'}</p>
                             <button onClick={processInput} disabled={isProcessing} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-3 active:scale-[0.98]">
                                 {isProcessing ? <><Loader2 className="animate-spin" /> AI Transcription...</> : "Generate AI Insights"}
@@ -374,7 +361,7 @@ const App = () => {
                 <div className="max-w-5xl mx-auto space-y-8 pb-32 animate-in fade-in duration-500">
                     <div className="flex items-center justify-between">
                         <button onClick={() => setView('dashboard')} className="p-2 hover:bg-white rounded-lg text-slate-300 transition-colors"><Undo2 size={20}/></button>
-                        <h2 className="text-2xl font-black text-slate-800">Intelligence Report</h2>
+                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">Intelligence Report</h2>
                         <button onClick={() => setIsEditing(!isEditing)} className="px-6 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all shadow-sm">
                           {isEditing ? "Save Report" : "Edit Report"}
                         </button>
